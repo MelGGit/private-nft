@@ -1,0 +1,77 @@
+module Token where
+
+import Payment
+
+type TokenOfferId = ContractId TokenOffer
+type TokenId = ContractId Token
+type PaybaleId = ContractId Payable
+
+template Token
+    with
+        issuer: Party
+        owner: Party
+        description: Text
+        userAdmin: Party -- makes sure that issuer and owner are legit
+        issued: Time
+        lastPrice: Decimal
+        currency: Text
+        royaltyRate: Decimal
+    where
+        signatory issuer, userAdmin
+        observer owner
+
+        choice Offer: TokenOfferId
+            with
+                newOwner: Party
+                price: Decimal
+            controller owner
+            do
+                create TokenOffer with ..
+
+template TokenOffer
+    with
+        issuer: Party
+        owner: Party
+        description: Text
+        userAdmin: Party -- makes sure that issuer and owner are legit
+        issued: Time
+        newOwner: Party
+        price: Decimal
+        lastPrice: Decimal
+        currency: Text
+        royaltyRate: Decimal
+    where
+        signatory issuer, userAdmin, owner
+        observer newOwner
+
+        key (issuer, owner, description): (Party, Party, Text)
+        maintainer key._2
+
+        choice AcceptToken: (TokenId, PayableId, Optional (PayableId))
+            controller newOwner, userAdmin
+            do
+                fromNewOwnerToOwner <- create Payable
+                    with
+                        from = newOwner
+                        to = owner
+                        amount = price
+                        currency
+                        reference = "Notional for `" <> description <> "`."
+
+                condRoyaltyPayment <- if owner == issuer
+                    then return None
+                    else Some <$> create Payable
+                    with
+                        from = newOwner
+                        to = issuer
+                        amount = price * royaltyRate
+                        currency
+                        reference = "Royalty for `" <> description <> "`."
+
+                newToken <- create Token
+                    with
+                        owner = newOwner
+                        lastPrice = price
+                        ..
+
+                return (newToken, fromNewOwnerToOwner, condRoyaltyPayment)

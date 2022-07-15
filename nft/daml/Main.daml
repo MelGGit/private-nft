@@ -1,0 +1,114 @@
+module Main where
+
+import Token
+import UserAdmin
+import Payment
+import Daml.Script
+import DA.Optional
+
+setup : Script ()
+setup = script do
+-- user_setup_begin
+  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+  bob <- allocatePartyWithHint "Bob" (PartyIdHint "Bob")
+  charlie <- allocatePartyWithHint "Charlie" (PartyIdHint "Charlie")
+  userAdmin <- allocatePartyWithHint "UserAdmin" (PartyIdHint "UserAdmin")
+  aliceId <- validateUserId "alice"
+  bobId <- validateUserId "bob"
+  charlieId <- validateUserId "charlie"
+  userAdminId <- validateUserId "useradmin"
+  createUser (User aliceId (Some alice)) [CanActAs alice]
+  createUser (User bobId (Some bob)) [CanActAs bob]
+  createUser (User charlieId (Some charlie)) [CanActAs charlie]
+  createUser (User userAdminId (Some userAdmin)) [CanActAs userAdmin]
+
+  aliceRequest <- submit alice do
+    createCmd IssuerRequest
+      with
+        userAdmin = userAdmin
+        issuer = alice
+        reason = "I like NFTs."
+
+  aliceIssuer <- submit userAdmin do
+    exerciseCmd aliceRequest GrantIssuerRights
+
+  originalToken <- submit alice do
+    exerciseCmd aliceIssuer MintToken
+      with
+        description = "Cat Pic 1"
+        initialPrice = 100.0
+        currency = "USD"
+        royaltyRate = 0.05
+  
+  bobRequest <- submit bob do
+    createCmd OwnerRequest
+      with
+        userAdmin = userAdmin
+        owner = bob
+        reason = "Im cool"
+  
+  bobOwner <- submit userAdmin do
+    exerciseCmd bobRequest GrantOwnerRights
+  
+  bobOffer <- submit alice do
+    exerciseCmd originalToken Offer
+      with
+        newOwner = bob
+        price = 200.0
+  
+  (bobToken, bobNotional, _) <- submit bob do
+    exerciseCmd bobOwner AcceptTokenAsNewOwner
+      with
+        offerId = bobOffer
+  
+  bobPaymentClaim <- submit bob do
+    exerciseCmd bobNotional ClaimPaid
+      with
+        transactionId = "1"
+  
+  submit alice do
+    exerciseCmd bobPaymentClaim Receive
+
+  charlieRequest <- submit charlie do
+    createCmd OwnerRequest
+      with
+        userAdmin = userAdmin
+        owner = charlie
+        reason = "Im even cooler than bob."
+
+  charlieOwner <- submit userAdmin do
+    exerciseCmd charlieRequest GrantOwnerRights
+  
+  charlieOffer <- submit bob do
+    exerciseCmd bobToken Offer
+      with
+        newOwner = charlie
+        price = 300.0
+  
+  (charlieToken, charlieNotional, charlieOptionalRoyalty) <- submit charlie do
+    exerciseCmd charlieOwner AcceptTokenAsNewOwner
+      with
+        offerId = charlieOffer
+
+  charliePaymentClaim <- submit charlie do
+    exerciseCmd charlieNotional ClaimPaid
+      with
+        transactionId = "2"
+  
+  submit bob do
+    exerciseCmd charliePaymentClaim Receive
+
+  charlieRoyaltyClaim <- submit charlie do
+    let
+      charlieRoyalty = fromSome charlieOptionalRoyalty
+    exerciseCmd charlieRoyalty ClaimPaid
+      with
+        transactionId = "3"
+  
+  submit alice do
+    exerciseCmd charlieRoyaltyClaim Receive
+
+  return ()
+
+-- curl -X POST -H "Content-Type: application/json" -H  "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2RhbWwuY29tL2xlZGdlci1hcGkiOnsibGVkZ2VySWQiOiJzYW5kYm94IiwiYXBwbGljYXRpb25JZCI6IkN1cmwiLCJhY3RBcyI6WyJBbGljZTo6MTIyMGY1ZDNiMjVlNDE4OGFhM2Y3MzQwYmM3OTk2MDc4YjliMGMwZWVmNzZiYTZlNjNiMjNjNGYzYjRiZjc0NmY2ZDMiXX19.RGkOhSjsxuyMhKQDIXis5APEHjMeM1fMal9LDg230vc" -d '{"templateId": "UserAdmin:Issuer", "contractId": "000677488462b493a778868629e8aff5a6277eff0408c3a043b3634106cfeebeebca0012203b4ad8eedded5e0dbed6d449128f65e92a0623a11c389e79e4316f5f3abee31c", "choice": "MintToken", "argument": {"description": "Parrot Pic", "initialPrice": "150.0", "currency": "USD", "royaltyRate": "0.10" }}' http://localhost:7575/v1/exercise
+-- curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2RhbWwuY29tL2xlZGdlci1hcGkiOnsibGVkZ2VySWQiOiJzYW5kYm94IiwiYXBwbGljYXRpb25JZCI6IkN1cmwiLCJhY3RBcyI6WyJBbGljZTo6MTIyMGY1ZDNiMjVlNDE4OGFhM2Y3MzQwYmM3OTk2MDc4YjliMGMwZWVmNzZiYTZlNjNiMjNjNGYzYjRiZjc0NmY2ZDMiXX19.RGkOhSjsxuyMhKQDIXis5APEHjMeM1fMal9LDg230vc" http://localhost:7575/v1/query
